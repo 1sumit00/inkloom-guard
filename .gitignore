@@ -29,6 +29,9 @@ ENV/
 postgres_data/
 qdrant_data/
 minio_data/
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE & OS files
 .DS_Store
