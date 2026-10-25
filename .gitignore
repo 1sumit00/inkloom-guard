@@ -1,0 +1,38 @@
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.secret
+
+# Node.js
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# Database & Object Store volumes
+postgres_data/
+qdrant_data/
+minio_data/
+
+# IDE & OS files
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/

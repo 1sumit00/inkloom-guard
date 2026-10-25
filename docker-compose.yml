@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL 16 with pgvector Extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: inkloom-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-inkloom_guard}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-inkloom_guard}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Qdrant Vector Database (Brand Guideline RAG Index)
+  qdrant:
+    image: qdrant/qdrant:v1.8.0
+    container_name: inkloom-qdrant
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. MinIO S3 Object Store (Assets & PDF whitepapers)
+  minio:
+    image: minio/minio:RELEASE.2024-03-03T17-50-39Z
+    container_name: inkloom-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000'"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 4. MinIO Bucket Initialization Provisioner
+  minio-init:
+    image: minio/mc:RELEASE.2024-03-03T17-50-39Z
+    container_name: inkloom-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
+      /usr/bin/mc mb --ignore-existing myminio/inkloom-assets;
+      /usr/bin/mc anonymous set public myminio/inkloom-assets;
+      echo 'MinIO storage initialized successfully';
+      exit 0;
+      "
+
+  # 5. Redis Cache & Job Queue
+  redis:
+    image: redis:7-alpine
+    container_name: inkloom-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # 6. FastAPI Backend Core Engine
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inkloom-backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-inkloom_guard}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - AI_MODEL_NAME=${AI_MODEL_NAME:-Gemini-2.5-Pro}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # 7. Next.js Frontend UI
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: inkloom-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  minio_data:
